@@ -108,7 +108,7 @@
             </div>
 
             <div class="input-group">
-                <span style="font-size: 14px; font-weight: 500; color: #333;">Opacity:</span>
+                <span style="font-size: 14px; font-weight: 500; color: #333;">TIFF Opacity:</span>
                 <input type="range" id="opacityRange" min="0" max="1" step="0.1" value="1" style="accent-color: #007bff; cursor: pointer;">
             </div>
 
@@ -138,17 +138,10 @@
         // 1. Initialize map
         const map = L.map('map').setView(laturCoords, defaultZoom);
 
-        // 2. Add standard OpenStreetMap base layer
+        // 2. Add standard OpenStreetMap base layer (Only Base Map)
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
             attribution: '© OpenStreetMap contributors'
-        }).addTo(map);
-
-        // 3. DP Overlay Layer Placeholder 
-        let dpLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
-            maxZoom: 17,
-            opacity: 1.0,
-            attribution: 'DP Layer Reference'
         }).addTo(map);
 
         let uploadedTiffLayer = null;
@@ -169,19 +162,32 @@
                         map.removeLayer(uploadedTiffLayer);
                     }
 
+                    // Dynamic handling to maintain true RGB colors from the DP Map file
                     uploadedTiffLayer = new GeoRasterLayer({
                         georaster: georaster,
                         opacity: parseFloat(document.getElementById('opacityRange').value),
                         pixelValuesToColorFn: values => {
-                            if (values[0] === 0) return 'rgba(0,0,0,0)';
-                            return `rgba(0, 123, 255, 1)`;
+                            // If the pixel is fully transparent or missing data, don't paint it
+                            if (values[0] === null || values[0] === undefined || (values[0] === 0 && values[1] === 0 && values[2] === 0)) {
+                                return 'rgba(0,0,0,0)';
+                            }
+                            // Handles standard 3-band (RGB) or 4-band (RGBA) geoTIFFs smoothly
+                            if (values.length >= 3) {
+                                const r = values[0];
+                                const g = values[1];
+                                const b = values[2];
+                                const a = values[3] !== undefined ? values[3] / 255 : 1;
+                                return `rgba(${r},${g},${b},${a})`;
+                            }
+                            // Fallback if it's a single band grayscale map
+                            return `rgba(${values[0]},${values[0]},${values[0]},1)`;
                         }
                     });
 
                     uploadedTiffLayer.addTo(map);
                     map.fitBounds(uploadedTiffLayer.getBounds());
                 }).catch(error => {
-                    alert("Error parsing TIFF file: " + error);
+                    alert("Error parsing TIFF file. Make sure it is a valid GeoTIFF: " + error);
                 });
             };
             reader.readAsArrayBuffer(file);
@@ -232,13 +238,10 @@
         });
 
 
-        // --- FEATURE LOGIC: Transparency Slider ---
+        // --- FEATURE LOGIC: Transparency Slider (Now ONLY targets the GeoTIFF) ---
         const opacitySlider = document.getElementById('opacityRange');
         opacitySlider.addEventListener('input', function(e) {
             const currentOpacity = parseFloat(e.target.value);
-            if (dpLayer && typeof dpLayer.setOpacity === 'function') {
-                dpLayer.setOpacity(currentOpacity);
-            }
             if (uploadedTiffLayer && typeof uploadedTiffLayer.setOpacity === 'function') {
                 uploadedTiffLayer.setOpacity(currentOpacity);
             }
