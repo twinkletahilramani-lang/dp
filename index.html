@@ -27,60 +27,225 @@
             height: 100%;
         }
         
+        .controls-panel {
+            background: #ffffff;
+            padding: 15px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+            z-index: 10;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .input-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .control-btn {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .control-btn:hover {
+            background-color: #0056b3;
+        }
+
+        .secondary-btn {
+            background-color: #6c757d;
+        }
+
+        .secondary-btn:hover {
+            background-color: #5a6268;
+        }
+
+        .coord-input {
+            padding: 6px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            width: 140px;
+            font-size: 13px;
+        }
+        
         #map {
             flex: 1;
             width: 100%;
             z-index: 1;
         }
-        </style>
+
+        /* Live Coordinate box overlay */
+        .coordinate-info {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 8px 12px;
+            border-radius: 4px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            z-index: 1000;
+            font-family: monospace;
+            font-size: 12px;
+            pointer-events: none;
+        }
+    </style>
 </head>
 <body>
 
     <div class="app-container">
-        <div class="controls-panel" style="background: #ffffff; padding: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.15); z-index: 10; display: flex; flex-wrap: wrap; gap: 15px; align-items: center;">
+        <div class="controls-panel">
             
-            <div style="display: flex; align-items: center; gap: 10px;">
-                <span style="font-size: 14px; font-weight: 500; color: #333;">DP Layer Opacity:</span>
+            <div class="input-group">
+                <label style="font-size: 14px; font-weight: 500; color: #333;">Upload TIFF:</label>
+                <input type="file" id="tiffFile" accept=".tif,.tiff" style="font-size: 13px;">
+            </div>
+
+            <div class="input-group">
+                <span style="font-size: 14px; font-weight: 500; color: #333;">Opacity:</span>
                 <input type="range" id="opacityRange" min="0" max="1" step="0.1" value="1" style="accent-color: #007bff; cursor: pointer;">
             </div>
-            
-            <div>
-                <button id="locateBtn" style="background-color: #007bff; color: white; border: none; padding: 8px 15px; border-radius: 4px; font-weight: 500; cursor: pointer;">📍 Find My Location</button>
+
+            <div class="input-group">
+                <input type="text" id="gotoCoords" class="coord-input" placeholder="Lat, Lon (e.g. 18.4, 76.5)">
+                <button id="gotoBtn" class="control-btn" style="padding: 6px 12px;">Go</button>
             </div>
+            
+            <button id="resetViewBtn" class="control-btn secondary-btn">🔄 Reset View</button>
+
+            <button id="locateBtn" class="control-btn">📍 Find My Location</button>
         </div>
 
         <div id="map"></div>
+
+        <div id="coordDisplay" class="coordinate-info">Lat: --, Lon: --</div>
     </div>
+
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/georaster"></script>
+    <script src="https://unpkg.com/georaster-layer-for-leaflet"></script>
+    
     <script>
-        // 1. Initialize the map centered around Latur coordinates
-        const map = L.map('map').setView([18.4088, 76.5604], 13);
+        const laturCoords = [18.4088, 76.5604];
+        const defaultZoom = 13;
+
+        // 1. Initialize map
+        const map = L.map('map').setView(laturCoords, defaultZoom);
 
         // 2. Add standard OpenStreetMap base layer
-        const baseOsm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
             attribution: '© OpenStreetMap contributors'
         }).addTo(map);
 
-        // 3. DP Overlay Layer (Replace this placeholder URL with your actual DP map source later)
-        const dpLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+        // 3. DP Overlay Layer Placeholder 
+        let dpLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
             maxZoom: 17,
             opacity: 1.0,
             attribution: 'DP Layer Reference'
         }).addTo(map);
 
+        let uploadedTiffLayer = null;
+        let searchMarker = null;
 
-        // --- Feature 1: Transparency Slider Logic ---
+
+        // --- FEATURE LOGIC: TIFF File Processing ---
+        document.getElementById('tiffFile').addEventListener('change', function(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const arrayBuffer = e.target.result;
+                
+                parseGeoRaster(arrayBuffer).then(georaster => {
+                    if (uploadedTiffLayer) {
+                        map.removeLayer(uploadedTiffLayer);
+                    }
+
+                    uploadedTiffLayer = new GeoRasterLayer({
+                        georaster: georaster,
+                        opacity: parseFloat(document.getElementById('opacityRange').value),
+                        pixelValuesToColorFn: values => {
+                            if (values[0] === 0) return 'rgba(0,0,0,0)';
+                            return `rgba(0, 123, 255, 1)`;
+                        }
+                    });
+
+                    uploadedTiffLayer.addTo(map);
+                    map.fitBounds(uploadedTiffLayer.getBounds());
+                }).catch(error => {
+                    alert("Error parsing TIFF file: " + error);
+                });
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+
+        // --- FEATURE LOGIC: Live Mouse Coordinate Tracker ---
+        const coordDisplay = document.getElementById('coordDisplay');
+        map.on('mousemove', function(e) {
+            const lat = e.latlng.lat.toFixed(5);
+            const lng = e.latlng.lng.toFixed(5);
+            coordDisplay.innerHTML = `Lat: ${lat}, Lon: ${lng}`;
+        });
+
+
+        // --- FEATURE LOGIC: Go to Inputted Coordinates ---
+        document.getElementById('gotoBtn').addEventListener('click', function() {
+            const inputVal = document.getElementById('gotoCoords').value.trim();
+            const parts = inputVal.split(/[\s,]+/);
+            
+            if (parts.length >= 2) {
+                const lat = parseFloat(parts[0]);
+                const lon = parseFloat(parts[1]);
+
+                if (!isNaN(lat) && !isNaN(lon)) {
+                    if (searchMarker) map.removeLayer(searchMarker);
+                    
+                    searchMarker = L.marker([lat, lon]).addTo(map)
+                        .bindPopup(`Target Coordinates:<br>Lat: ${lat}<br>Lon: ${lon}`).openPopup();
+                    
+                    map.setView([lat, lon], 15);
+                } else {
+                    alert("Please enter valid numeric coordinates.");
+                }
+            } else {
+                alert("Please enter both Latitude and Longitude separated by a comma or space.");
+            }
+        });
+
+
+        // --- FEATURE LOGIC: Reset View ---
+        document.getElementById('resetViewBtn').addEventListener('click', function() {
+            if (uploadedTiffLayer) {
+                map.fitBounds(uploadedTiffLayer.getBounds());
+            } else {
+                map.setView(laturCoords, defaultZoom);
+            }
+        });
+
+
+        // --- FEATURE LOGIC: Transparency Slider ---
         const opacitySlider = document.getElementById('opacityRange');
         opacitySlider.addEventListener('input', function(e) {
             const currentOpacity = parseFloat(e.target.value);
             if (dpLayer && typeof dpLayer.setOpacity === 'function') {
                 dpLayer.setOpacity(currentOpacity);
             }
+            if (uploadedTiffLayer && typeof uploadedTiffLayer.setOpacity === 'function') {
+                uploadedTiffLayer.setOpacity(currentOpacity);
+            }
         });
 
 
-        // --- Feature 2: Geolocation ("Find My Location") ---
+        // --- FEATURE LOGIC: Geolocation ("Find My Location") ---
         const locateBtn = document.getElementById('locateBtn');
         let locationMarker, locationCircle;
 
@@ -92,11 +257,9 @@
         map.on('locationfound', function(e) {
             locateBtn.textContent = "📍 Find My Location";
             
-            // Remove previous user location markers if clicked multiple times
             if (locationMarker) map.removeLayer(locationMarker);
             if (locationCircle) map.removeLayer(locationCircle);
 
-            // Draw accuracy circle and pin
             locationCircle = L.circle(e.latlng, e.accuracy).addTo(map);
             locationMarker = L.marker(e.latlng).addTo(map)
                 .bindPopup("You are within " + Math.round(e.accuracy) + " meters of this point").openPopup();
@@ -108,11 +271,9 @@
         });
 
 
-        // --- Feature 3: Screen Flexibility Adjustments ---
+        // --- FEATURE LOGIC: Screen Flexibility Adjustments ---
         window.addEventListener('resize', () => {
-            setTimeout(() => {
-                map.invalidateSize();
-            }, 200);
+            setTimeout(() => { map.invalidateSize(); }, 200);
         });
     </script>
 </body>
